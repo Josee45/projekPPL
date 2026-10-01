@@ -9,7 +9,11 @@ const breadcrumbs = document.querySelector("#breadcrumbs");
 const sidebar = document.querySelector("#sidebar");
 const scrim = document.querySelector("#scrim");
 const toast = document.querySelector("#toast");
+const menuButton = document.querySelector("#menuButton");
+const syncStatus = document.querySelector("#syncStatus");
+const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const STORAGE_KEY = "realification-state";
+const CLIENT_KEY = "realification-client-id";
 const DEFAULT_STATE = {
     page: "dashboard",
     stage: 0,
@@ -40,6 +44,10 @@ const state = {
     ...DEFAULT_STATE,
     ...(stored && typeof stored === "object" ? stored : {}),
 };
+
+const clientId = getClientId();
+let progressHydrated = false;
+let syncTimer = null;
 
 if (
     ![
@@ -97,7 +105,7 @@ const navNames = {
     dashboard: "Dashboard",
     map: "Peta Konsep",
     learn: "Belajar",
-    collection: "Concept Collection",
+    collection: "Koleksi Konsep",
     profile: "Profil",
     settings: "Pengaturan",
     evaluation: "Evaluasi Akhir",
@@ -131,11 +139,101 @@ const examples = [
         explanation: "7 berada di sebelah kanan 1 pada garis bilangan.",
     },
 ];
-const save = () => localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+function getClientId() {
+    let id = localStorage.getItem(CLIENT_KEY);
+    if (id) return id;
+
+    id =
+        typeof crypto.randomUUID === "function"
+            ? crypto.randomUUID()
+            : "10000000-1000-4000-8000-100000000000".replace(
+                  /[018]/g,
+                  (character) =>
+                      (
+                          Number(character) ^
+                          (crypto.getRandomValues(new Uint8Array(1))[0] &
+                              (15 >> (Number(character) / 4)))
+                      ).toString(16),
+              );
+    localStorage.setItem(CLIENT_KEY, id);
+    return id;
+}
+
+function setSyncStatus(label, type = "") {
+    syncStatus.textContent = label;
+    syncStatus.className = `sync-status ${type}`.trim();
+}
+
+function save({ remote = true } = {}) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    if (!remote || !progressHydrated) return;
+
+    setSyncStatus("Menyimpan…", "saving");
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncProgress, 450);
+}
+
+async function syncProgress() {
+    try {
+        const response = await fetch(`/learning-progress/${clientId}`, {
+            method: "PUT",
+            headers: {
+                Accept: "application/json",
+                "Content-Type": "application/json",
+                "X-CSRF-TOKEN": csrfToken,
+            },
+            body: JSON.stringify({ state }),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setSyncStatus("Tersimpan", "saved");
+    } catch {
+        setSyncStatus("Tersimpan lokal", "offline");
+    }
+}
+
+async function hydrateProgress() {
+    try {
+        const response = await fetch(`/learning-progress/${clientId}`, {
+            headers: { Accept: "application/json" },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const payload = await response.json();
+        if (payload.state && typeof payload.state === "object") {
+            Object.assign(state, DEFAULT_STATE, payload.state);
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+            render();
+        }
+        progressHydrated = true;
+        if (payload.state) setSyncStatus("Tersimpan", "saved");
+        else save();
+    } catch {
+        progressHydrated = true;
+        setSyncStatus("Mode lokal", "offline");
+    }
+}
+
+async function clearRemoteProgress() {
+    clearTimeout(syncTimer);
+    try {
+        const response = await fetch(`/learning-progress/${clientId}`, {
+            method: "DELETE",
+            headers: {
+                Accept: "application/json",
+                "X-CSRF-TOKEN": csrfToken,
+            },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        setSyncStatus("Progres diatur ulang", "saved");
+    } catch {
+        setSyncStatus("Reset tersimpan lokal", "offline");
+    }
+}
 
 function resetProgress() {
     Object.assign(state, DEFAULT_STATE, { page: "settings" });
-    save();
+    save({ remote: false });
+    clearRemoteProgress();
 }
 
 // Shared UI helpers
@@ -148,7 +246,7 @@ function notify(message) {
 function status(type) {
     if (type === "done") return '<span class="status-check">✓</span>';
     if (type === "current") return '<span class="status-current"></span>';
-    return '<span class="status-lock">▣</span>';
+    return '<span class="status-lock">•</span>';
 }
 
 function escapeHtml(value) {
@@ -166,16 +264,18 @@ function setBreadcrumbs(items) {
         .join("");
 }
 function syncNav() {
-    document
-        .querySelectorAll(".nav-item")
-        .forEach((item) =>
-            item.classList.toggle("active", item.dataset.page === state.page),
-        );
+    document.querySelectorAll(".nav-item").forEach((item) => {
+        const isActive = item.dataset.page === state.page;
+        item.classList.toggle("active", isActive);
+        if (isActive) item.setAttribute("aria-current", "page");
+        else item.removeAttribute("aria-current");
+    });
     save();
 }
 function closeMenu() {
     sidebar.classList.remove("open");
     scrim.classList.remove("show");
+    menuButton.setAttribute("aria-expanded", "false");
 }
 function navigate(page) {
     state.page = page;
@@ -200,40 +300,56 @@ function render() {
 function renderDashboard() {
     setBreadcrumbs([]);
     const stats = getConceptStats();
-    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Selamat datang di Realification, Andi!</h1><p class="page-subtitle">Lanjutkan perjalananmu memahami Sistem Bilangan Real.</p>
+    const chapter = getActiveChapter();
+    const completed = state.completedChapters.includes(chapter.id);
+    const score = state.chapterScores[chapter.id];
+    const journey = moduleChapters
+        .map((item) => {
+            const isActive = item.id === chapter.id;
+            const isDone = state.completedChapters.includes(item.id);
+            const label = isDone
+                ? "Selesai"
+                : isActive
+                  ? `Tahap ${Math.min(state.stage + 1, 4)} dari 4`
+                  : "Belum dimulai";
+            return `<button class="journey-row" data-chapter="${item.id}"><span class="journey-number ${isActive ? "purple" : ""}">${item.number}</span><span class="journey-panel ${isActive ? "open" : ""}"><b>${item.title}</b><small>${label}</small></span></button>`;
+        })
+        .join("");
+    const percent = Math.round((stats.done / stats.total) * 100);
+    pageRoot.innerHTML = `<div class="page"><div class="page-heading"><span class="eyebrow">Ruang Belajar</span><h1 class="page-title">Selamat datang!</h1><p class="page-subtitle">Lanjutkan pembelajaran Sistem Bilangan Real dari progres terakhirmu.</p></div>
     <div class="dashboard-grid"><div class="dashboard-left">
-      <section class="card continue-card"><h2 class="card-title"><span class="title-icon">▮▮</span>Lanjutkan Pembelajaran</h2><div class="continue-inner"><div class="concept-art"><span class="math">a &lt; b<br>a = b<br>a &gt; b</span></div><div class="continue-copy"><h3>Sifat-Sifat Urutan</h3><p>Chapter 3 — Trikotomi, Ketransitifan, Penambahan, dan Perkalian</p><p>Materi dan kuis telah disesuaikan dengan modul ajar Sistem Bilangan Real.</p><div class="mastery-row"><span>${status(state.completedChapters.includes("order") ? "done" : "current")} Materi</span><span>${status(state.chapterScores.order >= 8 ? "done" : "current")} Kuis</span><button class="btn btn-primary" data-chapter="order">${state.completedChapters.includes("order") ? "Lihat Kembali" : "Lanjutkan Belajar"}&nbsp; →</button></div></div></div></section>
-      <section class="card collection-preview"><div class="section-head"><div><h2 class="card-title"><span class="title-icon">▱</span>Concept Collection</h2><p>Concept yang sudah kamu kuasai.</p></div><button class="small-link" data-go="collection">Lihat Semua&nbsp; ›</button></div><div class="mini-concepts"><div class="mini-concept mastered"><b><span class="number">1</span>Bilangan Asli</b><span class="tag">Mastered</span><div class="mini-line">•—•—•—•</div></div><div class="mini-concept mastered"><b><span class="number">2</span>Bilangan Bulat</b><span class="tag">Mastered</span><div class="mini-line">←•—•—•→</div></div><div class="mini-concept mastered"><b><span class="number">3</span>Bilangan Rasional</b><span class="tag">Mastered</span><div class="mini-line">a/b</div></div><div class="mini-concept"><b><span class="number">4</span>Bilangan Irasional</b><div style="text-align:center;margin-top:34px">🔒</div></div></div></section>
-      <section class="card recommend-card"><h2 class="card-title"><span style="color:#cf2f4f">◎</span>Direkomendasikan untukmu</h2><div class="recommend-inner"><div class="recommend-icon">a&lt;b</div><div><h3>Kuis: Sifat-Sifat Urutan</h3><p>Uji trikotomi, ketransitifan, dan perubahan arah pertidaksamaan.</p></div><button class="btn btn-red" data-chapter="order" data-stage="2">Mulai Kuis&nbsp; ›</button></div></section>
+      <section class="card continue-card"><div class="section-head"><div><span class="eyebrow">Lanjutkan Pembelajaran</span><h2 class="card-title">${chapter.title}</h2></div><span class="chapter-chip">Bab ${chapter.number}</span></div><div class="continue-inner"><div class="concept-art"><span class="math">ℝ</span></div><div class="continue-copy"><p>${chapter.subtitle}</p><p>${chapter.objectives[0]}</p><div class="mastery-row"><span>${status(completed ? "done" : "current")} ${completed ? "Bab selesai" : `Tahap ${state.stage + 1} dari 4`}</span><span>${status(score >= 8 ? "done" : "idle")} ${Number.isInteger(score) ? `Skor ${score}/10` : "Kuis belum selesai"}</span><button class="btn btn-primary" data-chapter="${chapter.id}">${completed ? "Pelajari Kembali" : "Lanjutkan Belajar"}&nbsp; →</button></div></div></div></section>
+      <section class="card collection-preview"><div class="section-head"><div><h2 class="card-title">Koleksi Konsep</h2><p>Ringkasan konsep yang telah dipelajari.</p></div><button class="small-link" data-go="collection">Lihat Semua&nbsp; →</button></div><div class="stats-grid dashboard-stats"><div class="stat">${status("done")}<b>${stats.done}</b><small>Dikuasai</small></div><div class="stat">${status("current")}<b>${stats.progress}</b><small>Dipelajari</small></div><div class="stat">${status("idle")}<b>${stats.locked}</b><small>Belum dipelajari</small></div></div></section>
+      <section class="card recommend-card"><div class="recommend-inner"><div class="recommend-icon">✓</div><div><span class="eyebrow">Latihan Berikutnya</span><h3>Kuis ${chapter.title}</h3><p>Kerjakan 10 soal dan capai minimal 8 jawaban benar.</p></div><button class="btn btn-primary" data-chapter="${chapter.id}" data-stage="2">Buka Kuis&nbsp; →</button></div></section>
     </div><div class="dashboard-right">
-      <section class="card journey-card"><h2 class="card-title"><span class="title-icon">♧</span>Perjalanan Belajarmu</h2><div class="journey-list"><div class="journey-row"><span class="journey-number">1</span><div class="journey-panel">Klasifikasi Bilangan · 3/4</div></div><div class="journey-row"><span class="journey-number">2</span><div class="journey-panel">Sifat-Sifat Medan · 3/5</div></div><div class="journey-row"><span class="journey-number purple">3</span><div class="journey-panel open">Sifat-Sifat Urutan<ul><li>${status(state.mastered ? "done" : "current")} Trikotomi</li><li>${status("locked")} Ketransitifan</li><li>${status("locked")} Penambahan</li><li>${status("locked")} Perkalian</li></ul></div></div><div class="journey-row"><span class="journey-number">4</span><div class="journey-panel">🔒 &nbsp;Eksponen dan Bentuk Akar</div></div></div></section>
-      <section class="card stats-card"><h2 class="card-title"><span class="title-icon">▥</span>Pemahaman Konsepmu</h2><div class="stats-grid"><div class="stat">${status("done")}<b>${stats.done}</b><small>Konsep<br>dikuasai</small></div><div class="stat">${status("current")}<b>${stats.progress}</b><small>Sedang<br>dipelajari</small></div><div class="stat">${status("locked")}<b>${stats.locked}</b><small>Belum<br>ditemukan</small></div></div></section>
+      <section class="card journey-card"><div class="section-head"><div><span class="eyebrow">4 Bab</span><h2 class="card-title">Alur Pembelajaran</h2></div><button class="small-link" data-go="map">Lihat Peta</button></div><div class="journey-list">${journey}</div></section>
+      <section class="card stats-card"><h2 class="card-title">Progres Keseluruhan</h2><div class="progress-summary"><b>${percent}%</b><span>${stats.done} dari ${stats.total} konsep dikuasai</span></div><div class="progress-line"><i style="width:${percent}%"></i></div></section>
     </div></div></div>`;
 }
 
 function renderMap() {
     setBreadcrumbs([]);
-    const trichotomyStatus = state.completedChapters.includes("order")
-        ? "done"
-        : "current";
-    const node = (type, label, active = "") =>
-        `<div class="map-node ${active}">${status(type)}<span>${label}</span></div>`;
-    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Peta Konsep</h1><p class="page-subtitle">Jelajahi alur pembelajaran Sistem Bilangan Real. Selesaikan setiap konsep untuk membuka konsep berikutnya.</p><div class="map-layout">
-      <section class="map-scene"><div class="map-banner">SISTEM BILANGAN REAL</div><div class="map-columns">
-        <div class="map-chapter"><h3><span class="chapter-number">1</span>Klasifikasi<br>Bilangan</h3>${node("done", "Bilangan Asli")}${node("done", "Bilangan Bulat")}${node("done", "Bilangan Rasional")}${node("locked", "Bilangan Irasional")}</div>
-        <div class="map-chapter"><h3><span class="chapter-number">2</span>Sifat-Sifat<br>Medan</h3>${node("done", "Hukum Komutatif")}${node("done", "Hukum Asosiatif")}${node("done", "Hukum Distributif")}${node("locked", "Elemen Identitas")}${node("locked", "Invers (Balikan)")}</div>
-        <div class="map-chapter active"><h3><span class="chapter-number">3</span>Sifat-Sifat<br>Urutan</h3>${node(trichotomyStatus, "Trikotomi", "active")}${node("locked", "Ketransitifan")}${node("locked", "Penambahan")}${node("locked", "Perkalian")}</div>
-        <div class="map-chapter"><h3><span class="chapter-number">4</span>Eksponen dan<br>Bentuk Akar</h3>${node("locked", "Sifat Bilangan Berpangkat")}${node("locked", "Bentuk Akar")}${node("locked", "Operasi Bentuk Akar")}</div>
-      </div></section>
-      <aside class="map-side"><section class="card chapter-card"><span>Chapter 3</span><h2>Sifat-Sifat Urutan</h2><p>Pada chapter ini kamu akan mempelajari cara membandingkan dan mengurutkan bilangan real melalui trikotomi, ketransitifan, penambahan, dan perkalian.</p><div class="chapter-progress"><b>Progress Chapter <small style="float:right">${state.completedChapters.includes("order") ? 4 : 0}/4 tahap</small></b><div class="progress-line" style="margin-top:10px"><i style="width:${state.completedChapters.includes("order") ? 100 : 0}%"></i></div></div></section><section class="card concept-list-card"><h3>Daftar Konsep</h3><div class="concept-list"><div class="concept-item active">${status(trichotomyStatus)}<span><b>Trikotomi</b><small>Untuk dua bilangan real, tepat satu hubungan &lt;, =, atau &gt; berlaku.</small></span><button class="btn btn-primary" data-chapter="order" style="min-height:36px;padding:0 12px">Pelajari Bab ›</button></div><div class="concept-item">${status("locked")}<span><b>Ketransitifan</b><small>Hubungan urutan yang diteruskan melalui bilangan perantara.</small></span><button class="btn" data-chapter="order" style="min-height:34px;padding:0 12px">Buka Materi</button></div><div class="concept-item">${status("locked")}<span><b>Penambahan</b><small>Sifat penambahan pada pertidaksamaan.</small></span><button class="btn" data-chapter="order" style="min-height:34px;padding:0 12px">Buka Materi</button></div><div class="concept-item">${status("locked")}<span><b>Perkalian</b><small>Sifat perkalian pada pertidaksamaan.</small></span><button class="btn" data-chapter="order" style="min-height:34px;padding:0 12px">Buka Materi</button></div></div></section></aside>
-      <section class="card legend"><h3>▱ &nbsp;Petunjuk Peta Konsep</h3><span>${status("done")} Konsep sudah dikuasai</span><span>${status("current")} Sedang dipelajari</span><span>${status("locked")} Konsep terkunci</span><span>○——○ &nbsp;Alur pembelajaran</span></section>
+    const activeChapter = getActiveChapter();
+    const chapterCards = moduleChapters
+        .map((chapter) => {
+            const done = state.completedChapters.includes(chapter.id);
+            const active = chapter.id === activeChapter.id;
+            return `<article class="map-chapter ${active ? "active" : ""}"><button class="map-chapter-heading" data-chapter="${chapter.id}"><span class="chapter-number">${chapter.number}</span><span><small>${done ? "Bab selesai" : active ? "Sedang dipelajari" : "Belum dimulai"}</small><b>${chapter.title}</b></span><span class="map-arrow">→</span></button><div class="map-node-list">${chapter.concepts.map(([title], index) => `<div class="map-node ${active && index === 0 ? "active" : ""}">${status(done ? "done" : active && index === 0 ? "current" : "idle")}<span>${title}</span></div>`).join("")}</div></article>`;
+        })
+        .join("");
+    const completed = state.completedChapters.includes(activeChapter.id);
+    const progress = completed ? 4 : Math.min(state.stage + 1, 4);
+    pageRoot.innerHTML = `<div class="page"><div class="page-heading"><span class="eyebrow">Struktur Materi</span><h1 class="page-title">Peta Konsep</h1><p class="page-subtitle">Pilih bab untuk melihat konsep dan melanjutkan pembelajaran. Semua bab dapat dibuka kapan saja.</p></div><div class="map-layout">
+      <section class="map-scene"><div class="map-banner"><span>ℝ</span><div><small>MODUL PEMBELAJARAN</small><b>Sistem Bilangan Real</b></div></div><div class="map-columns">${chapterCards}</div></section>
+      <aside class="map-side"><section class="card chapter-card"><span class="eyebrow">Bab ${activeChapter.number}</span><h2>${activeChapter.title}</h2><p>${activeChapter.subtitle}</p><div class="chapter-progress"><b>Progres bab <small>${progress}/4 tahap</small></b><div class="progress-line"><i style="width:${(progress / 4) * 100}%"></i></div></div><button class="btn btn-primary map-primary-action" data-chapter="${activeChapter.id}">${completed ? "Pelajari Kembali" : "Lanjutkan Bab"} →</button></section><section class="card concept-list-card"><h3>Konsep dalam bab ini</h3><div class="concept-list">${activeChapter.concepts.map(([title, formula], index) => `<div class="concept-item">${status(completed ? "done" : index === 0 ? "current" : "idle")}<span><b>${title}</b><small>${escapeHtml(formula)}</small></span></div>`).join("")}</div></section></aside>
+      <section class="card legend"><h3>Petunjuk status</h3><span>${status("done")} Sudah dikuasai</span><span>${status("current")} Sedang dipelajari</span><span>${status("idle")} Belum dipelajari</span></section>
     </div></div>`;
 }
 
 function learningHeader(title) {
     const chapter = getActiveChapter();
     const completed = state.completedChapters.includes(chapter.id);
-    return `<h1 class="page-title">${chapter.title}</h1><p class="page-subtitle">${title}</p><div class="chapter-tabs">${moduleChapters.map((item) => `<button class="filter-tab ${item.id === chapter.id ? "active" : ""}" data-chapter="${item.id}">${item.number}. ${item.title}</button>`).join("")}</div><div class="learning-layout"><div class="learning-main"><div class="stage-tabs">${stages.map((label, i) => `<button class="stage-tab ${i === state.stage ? "active" : ""} ${i < state.stage || completed ? "done" : ""}" data-stage="${i}"><span class="stage-dot">${i < state.stage || completed ? "✓" : i + 1}</span>${label}</button>`).join("")}</div>`;
+    return `<div class="page-heading"><span class="eyebrow">Bab ${chapter.number} dari ${moduleChapters.length}</span><h1 class="page-title">${chapter.title}</h1><p class="page-subtitle">${title}</p></div><div class="chapter-tabs" aria-label="Pilih bab">${moduleChapters.map((item) => `<button class="filter-tab ${item.id === chapter.id ? "active" : ""}" data-chapter="${item.id}">${item.number}. ${item.title}</button>`).join("")}</div><div class="learning-layout"><div class="learning-main"><div class="stage-tabs" aria-label="Tahap pembelajaran">${stages.map((label, i) => `<button class="stage-tab ${i === state.stage ? "active" : ""} ${i < state.stage || completed ? "done" : ""}" data-stage="${i}"><span class="stage-dot">${i < state.stage || completed ? "✓" : i + 1}</span><span>${label}</span></button>`).join("")}</div>`;
 }
 
 // Learning flow
@@ -501,7 +617,7 @@ function getConceptStats(groups = getConceptGroups()) {
 // Concept collection
 function conceptCard(item) {
     const [title, symbol, desc, type] = item;
-    return `<article class="concept-card ${type}"><span class="corner">${status(type === "progress" ? "current" : type)}</span><div class="concept-symbol">${escapeHtml(symbol)}</div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(desc)}</p><div class="concept-status">${type === "done" ? "✓ Dikuasai" : type === "locked" ? "▣ Terkunci" : `<div class="progress-line"><i style="width:50%"></i></div><button class="btn" data-go="learn">Lanjut Belajar →</button>`}</div></article>`;
+    return `<article class="concept-card ${type}"><span class="corner">${status(type === "progress" ? "current" : type)}</span><div class="concept-symbol">${escapeHtml(symbol)}</div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(desc)}</p><div class="concept-status">${type === "done" ? "✓ Dikuasai" : type === "locked" ? "Belum dipelajari" : `<div class="progress-line"><i style="width:50%"></i></div><button class="btn" data-go="learn">Lanjut Belajar →</button>`}</div></article>`;
 }
 function renderCollection() {
     setBreadcrumbs(["Sistem Bilangan Real", "Concept Collection"]);
@@ -511,7 +627,7 @@ function renderCollection() {
         ["all", `▦ &nbsp;Semua Konsep (${stats.total})`],
         ["done", `✓ &nbsp;Telah Dikuasai (${stats.done})`],
         ["progress", `◷ &nbsp;Sedang Berlangsung (${stats.progress})`],
-        ["locked", `▣ &nbsp;Terkunci (${stats.locked})`],
+        ["locked", `○ &nbsp;Belum Dipelajari (${stats.locked})`],
     ];
     const groups = conceptGroups
         .map((group) => ({
@@ -523,18 +639,19 @@ function renderCollection() {
         }))
         .filter((group) => group.items.length);
     const progress = Math.round((stats.done / stats.total) * 100);
-    pageRoot.innerHTML = `<div class="page"><div class="collection-header"><div><h1 class="page-title">Concept Collection</h1><p class="page-subtitle">Koleksi konsep yang telah kamu kuasai. Selesaikan setiap konsep untuk membuka konsep berikutnya dan melanjutkan perjalanan belajarmu!</p><button class="btn btn-primary" data-go="evaluation">Mulai Evaluasi Akhir →</button></div><section class="card overall-progress"><b>Progres Keseluruhan Bab <span style="float:right;color:var(--muted)">${stats.done} dari ${stats.total} konsep</span></b><div class="progress-line" style="margin-top:12px"><i style="width:${progress}%"></i></div></section></div><div class="filter-tabs">${filters.map(([value, label]) => `<button class="filter-tab ${state.filter === value ? "active" : ""}" data-filter="${value}">${label}</button>`).join("")}</div>${groups.map((group, i) => `<section class="collection-group"><div class="group-head"><h2 class="group-title"><span>${i + 1}</span>${group.title}</h2><button class="btn" data-chapter="${group.id}">Pelajari Bab →</button></div><div class="concept-grid">${group.items.map(conceptCard).join("")}</div></section>`).join("")}</div>`;
+    pageRoot.innerHTML = `<div class="page"><div class="collection-header"><div><span class="eyebrow">Perpustakaan Belajar</span><h1 class="page-title">Koleksi Konsep</h1><p class="page-subtitle">Tinjau konsep yang dikuasai, sedang dipelajari, atau belum dimulai.</p><button class="btn btn-primary" data-go="evaluation">Mulai Evaluasi Akhir →</button></div><section class="card overall-progress"><b>Progres Keseluruhan <span>${stats.done} dari ${stats.total} konsep</span></b><div class="progress-line"><i style="width:${progress}%"></i></div></section></div><div class="filter-tabs">${filters.map(([value, label]) => `<button class="filter-tab ${state.filter === value ? "active" : ""}" data-filter="${value}">${label}</button>`).join("")}</div>${groups.map((group) => `<section class="collection-group"><div class="group-head"><h2 class="group-title"><span>${moduleChapters.find((chapter) => chapter.id === group.id)?.number || "•"}</span>${group.title}</h2><button class="btn" data-chapter="${group.id}">Pelajari Bab →</button></div><div class="concept-grid">${group.items.map(conceptCard).join("")}</div></section>`).join("")}</div>`;
 }
 
 function renderProfile() {
     setBreadcrumbs(["Profil"]);
     const stats = getConceptStats();
-    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Profil</h1><p class="page-subtitle">Ringkasan perjalanan belajar kamu.</p><div class="account-grid"><section class="card profile-card"><span class="profile-avatar">A</span><h2>Andi</h2><p>Pelajar Realification</p><button class="btn" data-message="Pengubahan profil akan tersedia setelah sistem akun ditambahkan.">Ubah Profil</button></section><section class="card profile-summary"><h2>Progres Belajar</h2><div class="stats-grid"><div class="stat">${status("done")}<b>${stats.done}</b><small>Konsep<br>dikuasai</small></div><div class="stat">${status("current")}<b>${stats.progress}</b><small>Sedang<br>dipelajari</small></div><div class="stat">${status("locked")}<b>${stats.locked}</b><small>Belum<br>dibuka</small></div></div><button class="btn btn-primary" data-go="learn">Lanjutkan Belajar →</button></section></div></div>`;
+    const percent = Math.round((stats.done / stats.total) * 100);
+    pageRoot.innerHTML = `<div class="page"><div class="page-heading"><span class="eyebrow">Ringkasan Akun</span><h1 class="page-title">Profil Belajar</h1><p class="page-subtitle">Lihat ringkasan perjalanan dan progres belajarmu.</p></div><div class="account-grid"><section class="card profile-card"><span class="profile-avatar">P</span><h2>Pelajar</h2><p>Profil lokal pada perangkat ini</p><span class="settings-badge">Progres tersinkron</span></section><section class="card profile-summary"><div class="section-head"><div><span class="eyebrow">Aktivitas Belajar</span><h2>Progres Konsep</h2></div><b class="profile-percentage">${percent}%</b></div><div class="stats-grid"><div class="stat">${status("done")}<b>${stats.done}</b><small>Konsep dikuasai</small></div><div class="stat">${status("current")}<b>${stats.progress}</b><small>Sedang dipelajari</small></div><div class="stat">${status("idle")}<b>${stats.locked}</b><small>Belum dipelajari</small></div></div><button class="btn btn-primary" data-go="learn">Lanjutkan Belajar →</button></section></div></div>`;
 }
 
 function renderSettings() {
     setBreadcrumbs(["Pengaturan"]);
-    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Pengaturan</h1><p class="page-subtitle">Kelola pengalaman belajar di perangkat ini.</p><section class="card settings-card"><div class="settings-row"><div><h2>Progres lokal</h2><p>Progres pembelajaran tersimpan otomatis di browser ini.</p></div><span class="settings-badge">Tersimpan otomatis</span></div><div class="settings-row danger-zone"><div><h2>Atur ulang progres</h2><p>Hapus jawaban dan progres belajar pada perangkat ini, lalu mulai kembali dari awal.</p></div><button class="btn btn-red" data-action="reset-progress">Atur Ulang</button></div></section></div>`;
+    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Pengaturan</h1><p class="page-subtitle">Kelola pengalaman belajar di perangkat ini.</p><section class="card settings-card"><div class="settings-row"><div><h2>Penyimpanan progres</h2><p>Progres tersimpan otomatis ke database dan tetap memiliki salinan lokal di browser.</p></div><span class="settings-badge">Sinkron otomatis</span></div><div class="settings-row danger-zone"><div><h2>Atur ulang progres</h2><p>Hapus jawaban dan progres belajar pada perangkat ini serta database, lalu mulai kembali dari awal.</p></div><button class="btn btn-red" data-action="reset-progress">Atur Ulang</button></div></section></div>`;
 }
 
 function renderEvaluation() {
@@ -749,12 +866,14 @@ document.addEventListener("change", (event) => {
         save();
     }
 });
-document.querySelector("#menuButton").addEventListener("click", () => {
+menuButton.addEventListener("click", () => {
     sidebar.classList.add("open");
     scrim.classList.add("show");
+    menuButton.setAttribute("aria-expanded", "true");
 });
 scrim.addEventListener("click", closeMenu);
 document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeMenu();
 });
 render();
+hydrateProgress();

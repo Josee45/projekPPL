@@ -11,7 +11,7 @@ Realification adalah aplikasi pembelajaran interaktif untuk membantu pengguna me
 - Evaluasi akhir berisi 20 pilihan ganda dan 4 soal uraian.
 - Contoh, aktivitas, rangkuman, refleksi, dan penerapan konsep.
 - Concept Collection dengan filter status.
-- Profil, pengaturan, dan penyimpanan progres lokal.
+- Profil, pengaturan, dan sinkronisasi progres ke database dengan cadangan lokal.
 - Tampilan responsif untuk desktop dan perangkat seluler.
 
 ## Teknologi
@@ -53,10 +53,15 @@ npm run build
 
 ## Struktur utama
 
-- `resources/views/welcome.blade.php` — kerangka halaman aplikasi.
-- `resources/js/app.js` — navigasi, state, dan interaksi pembelajaran.
+- `resources/views/welcome.blade.php` — konten shell aplikasi pembelajaran.
+- `resources/views/layouts/` — layout utama aplikasi dan halaman error.
+- `resources/views/partials/` — sidebar dan topbar yang dapat dirawat terpisah.
+- `resources/views/errors/` — halaman 404, 419, dan 500 khusus Realification.
+- `resources/js/app.js` — navigasi, state, interaksi, dan sinkronisasi progres.
 - `resources/css/app.css` — desain dan tampilan responsif.
 - `public/images/` — aset visual yang digunakan aplikasi.
-- `routes/web.php` — route halaman utama.
+- `app/Http/Controllers/` — controller halaman dan progres pembelajaran.
+- `app/Models/LearningProgress.php` — model progres belajar.
+- `routes/web.php` — route halaman utama dan endpoint progres.
 
-Progres pembelajaran saat ini disimpan di `localStorage` browser dengan key `realification-state`.
+Progres pembelajaran disimpan di tabel `learning_progresses`. `localStorage` dengan key `realification-state` tetap digunakan sebagai cadangan ketika koneksi ke server terganggu.
