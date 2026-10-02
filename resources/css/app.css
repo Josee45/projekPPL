@@ -1815,6 +1815,156 @@ button {
         padding: 34px 20px;
     }
 }
+
+/* Progress and written evaluation */
+.empty-state {
+    max-width: 720px;
+    margin: 34px auto;
+    padding: 38px 28px;
+    text-align: center;
+}
+
+.empty-state > span {
+    width: 58px;
+    height: 58px;
+    margin: 0 auto 14px;
+    border-radius: 16px;
+    background: #edf4ff;
+    color: var(--blue);
+    display: grid;
+    place-items: center;
+    font-size: 30px;
+}
+
+.empty-state h2 {
+    margin: 0 0 6px;
+    font-size: 20px;
+}
+
+.empty-state p {
+    margin: 0 0 22px;
+    color: var(--muted);
+}
+
+.question-progress {
+    height: 7px;
+    margin: 18px 0 0;
+    border-radius: 999px;
+    background: #e7edf5;
+    overflow: hidden;
+}
+
+.question-progress > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--blue), #62a1ff);
+    transition: width 0.25s ease;
+}
+
+.essay-section {
+    margin-top: 22px;
+}
+
+.essay-heading,
+.essay-question-heading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.essay-heading {
+    justify-content: space-between;
+}
+
+.essay-heading h2,
+.essay-question-heading h3 {
+    margin: 0;
+}
+
+.essay-section > p {
+    max-width: 700px;
+    color: var(--muted);
+    line-height: 1.6;
+}
+
+.essay-question {
+    margin-top: 16px;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: #f8fbff;
+}
+
+.essay-number {
+    width: 32px;
+    height: 32px;
+    flex: 0 0 32px;
+    border-radius: 9px;
+    background: #e6f0ff;
+    color: var(--blue);
+    display: grid;
+    place-items: center;
+    font-weight: 800;
+}
+
+.essay-question > p {
+    margin: 14px 0 18px;
+    line-height: 1.6;
+}
+
+.essay-question label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.essay-answer {
+    width: 100%;
+    min-height: 150px;
+    padding: 14px 16px;
+    border: 1px solid #cddbed;
+    border-radius: 11px;
+    background: #fff;
+    color: var(--ink);
+    font: inherit;
+    line-height: 1.6;
+    resize: vertical;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.essay-answer:focus {
+    border-color: var(--blue);
+    outline: none;
+    box-shadow: 0 0 0 3px #1769e823;
+}
+
+.essay-answer::placeholder {
+    color: #8c9bb1;
+}
+
+.essay-count {
+    display: block;
+    margin-top: 5px;
+    color: var(--muted);
+    text-align: right;
+}
+
+@media (max-width: 760px) {
+    .empty-state {
+        margin-top: 20px;
+        padding: 30px 20px;
+    }
+
+    .essay-question {
+        padding: 16px;
+    }
+
+    .essay-answer {
+        min-height: 180px;
+    }
+}
 @media (prefers-reduced-motion: reduce) {
     * {
         animation-duration: 0.01ms !important;

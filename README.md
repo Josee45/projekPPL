@@ -8,9 +8,9 @@ Realification adalah aplikasi pembelajaran interaktif untuk membantu pengguna me
 - Peta konsep Sistem Bilangan Real.
 - Empat bab modul: klasifikasi bilangan, sifat medan, sifat urutan, serta eksponen dan bentuk akar.
 - Empat puluh soal kuis bab dengan umpan balik dan target penguasaan 80.
-- Evaluasi akhir berisi 20 pilihan ganda dan 4 soal uraian.
+- Evaluasi akhir berisi 20 pilihan ganda dan 4 soal uraian dengan kolom jawaban tersimpan otomatis.
 - Contoh, aktivitas, rangkuman, refleksi, dan penerapan konsep.
-- Concept Collection dengan filter status.
+- Koleksi Konsep dengan filter status yang mengikuti progres belajar.
 - Profil, pengaturan, dan sinkronisasi progres ke database dengan cadangan lokal.
 - Tampilan responsif untuk desktop dan perangkat seluler.
 
@@ -65,3 +65,4 @@ npm run build
 - `routes/web.php` — route halaman utama dan endpoint progres.
 
 Progres pembelajaran disimpan di tabel `learning_progresses`. `localStorage` dengan key `realification-state` tetap digunakan sebagai cadangan ketika koneksi ke server terganggu.
+Tahap terakhir setiap bab juga disimpan sehingga tombol lanjut belajar membuka posisi terakhir. Penilaian otomatis hanya berlaku untuk pilihan ganda; jawaban uraian memerlukan penilaian pengajar.
