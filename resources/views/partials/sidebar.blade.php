@@ -9,6 +9,7 @@
         <button class="nav-item" type="button" data-page="map"><span aria-hidden="true">⌘</span>Peta Konsep</button>
         <button class="nav-item" type="button" data-page="learn"><span aria-hidden="true">▤</span>Belajar</button>
         <button class="nav-item" type="button" data-page="collection"><span aria-hidden="true">▣</span>Koleksi Konsep</button>
+        <button class="nav-item" type="button" data-page="evaluation"><span aria-hidden="true">✓</span>Evaluasi Akhir</button>
     </nav>
 
     <div class="nav-divider"></div>

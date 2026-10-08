@@ -3065,3 +3065,91 @@ select:focus-visible,
         text-align: center;
     }
 }
+
+/* Guidance shown only before the first lesson. */
+.onboarding-guide {
+    display: flex;
+    align-items: center;
+    gap: 30px;
+    margin-bottom: 20px;
+    padding: 20px 24px;
+    background: linear-gradient(115deg, #eef5ff, #ffffff 62%);
+}
+
+.onboarding-intro {
+    flex: 0 0 230px;
+}
+
+.onboarding-intro h2 {
+    margin: 0;
+    font-size: 17px;
+    letter-spacing: -0.02em;
+}
+
+.onboarding-intro p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.onboarding-steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    flex: 1;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.onboarding-steps li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 8px 11px;
+    border: 1px solid #dce9fa;
+    border-radius: 10px;
+    background: #fff;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.onboarding-steps b {
+    color: var(--blue);
+    font-size: 14px;
+}
+
+.map-chapter-heading:hover .map-arrow,
+.map-chapter-heading:focus-visible .map-arrow {
+    transform: translateX(3px);
+}
+
+.map-arrow {
+    font-size: 11px;
+    white-space: nowrap;
+    transition: transform 0.18s ease;
+}
+
+@media (max-width: 1100px) {
+    .onboarding-guide {
+        align-items: stretch;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .onboarding-intro {
+        flex-basis: auto;
+    }
+}
+
+@media (max-width: 620px) {
+    .onboarding-guide {
+        padding: 18px;
+    }
+
+    .onboarding-steps {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+}

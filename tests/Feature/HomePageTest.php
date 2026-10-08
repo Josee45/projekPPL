@@ -12,6 +12,7 @@ class HomePageTest extends TestCase
             ->assertOk()
             ->assertSee('REALIFICATION')
             ->assertSee('Navigasi utama')
+            ->assertSee('Evaluasi Akhir')
             ->assertSee('Menyiapkan ruang belajar')
             ->assertViewIs('welcome');
     }

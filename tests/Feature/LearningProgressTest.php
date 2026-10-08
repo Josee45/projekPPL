@@ -54,6 +54,42 @@ class LearningProgressTest extends TestCase
         $this->assertDatabaseEmpty('learning_progresses');
     }
 
+    public function test_demo_progress_can_be_replaced_with_fresh_progress(): void
+    {
+        $clientId = (string) Str::uuid();
+        $demoState = [
+            'page' => 'settings',
+            'chapterId' => 'field',
+            'stage' => 2,
+            'chapterStages' => ['classification' => 4, 'field' => 2],
+            'startedChapters' => ['classification', 'field'],
+            'quizAnswers' => ['classification' => [1, 1, 2, 1, 0, 2, 3, 1, 0, 2], 'field' => [0, 1]],
+            'quizIndex' => 2,
+            'chapterScores' => ['classification' => 9],
+            'completedChapters' => ['classification'],
+        ];
+
+        $this->putJson("/learning-progress/{$clientId}", ['state' => $demoState])
+            ->assertOk();
+
+        $this->putJson("/learning-progress/{$clientId}", ['state' => [
+            'page' => 'settings',
+            'chapterId' => 'classification',
+            'stage' => 0,
+            'chapterStages' => [],
+            'startedChapters' => [],
+            'quizAnswers' => [],
+            'chapterScores' => [],
+            'completedChapters' => [],
+        ]])->assertOk();
+
+        $this->getJson("/learning-progress/{$clientId}")
+            ->assertOk()
+            ->assertJsonPath('state.completedChapters', [])
+            ->assertJsonPath('state.startedChapters', [])
+            ->assertJsonPath('state.quizAnswers', []);
+    }
+
     public function test_invalid_progress_is_rejected(): void
     {
         $clientId = (string) Str::uuid();

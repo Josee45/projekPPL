@@ -3,6 +3,15 @@ import {
     finalEvaluation,
     moduleChapters,
 } from "./module-content";
+import {
+    advanceQuiz,
+    calculateQuizScore,
+    createDemoState,
+    freshState,
+    normalizeState,
+    openChapter,
+    recordQuizAnswer,
+} from "./learning-state";
 
 const pageRoot = document.querySelector("#page");
 const breadcrumbs = document.querySelector("#breadcrumbs");
@@ -15,30 +24,6 @@ const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
 const STORAGE_KEY = "realification-state";
 const CLIENT_KEY = "realification-client-id";
 const PENDING_SYNC_KEY = "realification-pending-sync";
-const DEFAULT_STATE = {
-    page: "dashboard",
-    stage: 0,
-    exampleIndex: 0,
-    challengeChoice: null,
-    challengeResult: null,
-    relation: "<",
-    applicationChoice: null,
-    mastered: false,
-    reviewing: false,
-    filter: "all",
-    chapterId: "classification",
-    chapterStages: {},
-    startedChapters: [],
-    quizIndex: 0,
-    quizAnswers: {},
-    chapterScores: {},
-    completedChapters: [],
-    evaluationIndex: 0,
-    evaluationAnswers: [],
-    essayAnswers: [],
-};
-const freshState = () => JSON.parse(JSON.stringify(DEFAULT_STATE));
-
 let stored = null;
 try {
     stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
@@ -56,59 +41,8 @@ let syncTimer = null;
 let syncInFlight = false;
 let syncRevision = 0;
 
-function normalizeState() {
-    const chapterIds = new Set(moduleChapters.map((chapter) => chapter.id));
-    const pages = ["dashboard", "map", "learn", "collection", "profile", "settings", "evaluation"];
-
-    if (!pages.includes(state.page)) state.page = "dashboard";
-    if (!chapterIds.has(state.chapterId)) state.chapterId = "classification";
-    if (!Number.isInteger(state.stage) || state.stage < 0 || state.stage > 4)
-        state.stage = 0;
-    if (!Number.isInteger(state.quizIndex) || state.quizIndex < 0)
-        state.quizIndex = 0;
-    if (!Number.isInteger(state.evaluationIndex) || state.evaluationIndex < 0 ||
-        state.evaluationIndex > finalEvaluation.length)
-        state.evaluationIndex = 0;
-    if (!["all", "done", "progress", "locked"].includes(state.filter))
-        state.filter = "all";
-
-    if (!state.quizAnswers || typeof state.quizAnswers !== "object" || Array.isArray(state.quizAnswers))
-        state.quizAnswers = {};
-    if (!state.chapterScores || typeof state.chapterScores !== "object" || Array.isArray(state.chapterScores))
-        state.chapterScores = {};
-    if (!Array.isArray(state.completedChapters)) state.completedChapters = [];
-    if (state.mastered && !state.completedChapters.includes("order"))
-        state.completedChapters.push("order");
-    state.completedChapters = [...new Set(state.completedChapters.filter((id) => chapterIds.has(id)))];
-
-    if (!state.chapterStages || typeof state.chapterStages !== "object" || Array.isArray(state.chapterStages))
-        state.chapterStages = {};
-    if (!Array.isArray(state.startedChapters)) state.startedChapters = [];
-    state.startedChapters = [...new Set(state.startedChapters.filter((id) => chapterIds.has(id)))];
-    if ((state.page === "learn" || state.stage > 0 || state.quizAnswers[state.chapterId]?.length) &&
-        !state.startedChapters.includes(state.chapterId))
-        state.startedChapters.push(state.chapterId);
-
-    if (!Array.isArray(state.evaluationAnswers)) state.evaluationAnswers = [];
-    if (!Array.isArray(state.essayAnswers)) state.essayAnswers = [];
-    state.essayAnswers = essayEvaluation.map((_, index) =>
-        typeof state.essayAnswers[index] === "string"
-            ? state.essayAnswers[index].slice(0, 5000)
-            : "",
-    );
-
-    if (state.stage === 4 && !state.completedChapters.includes(state.chapterId))
-        state.stage = 0;
-    for (const chapter of moduleChapters) {
-        const stage = state.chapterStages[chapter.id];
-        if (!Number.isInteger(stage) || stage < 0 || stage > 4 ||
-            (stage === 4 && !state.completedChapters.includes(chapter.id)))
-            state.chapterStages[chapter.id] = 0;
-    }
-    state.chapterStages[state.chapterId] = state.stage;
-}
-
-normalizeState();
+normalizeState(state);
+let mapPreviewChapterId = state.chapterId;
 
 const navNames = {
     dashboard: "Dashboard",
@@ -239,7 +173,8 @@ async function hydrateProgress() {
         }
         if (payload.state && typeof payload.state === "object") {
             Object.assign(state, freshState(), payload.state);
-            normalizeState();
+            normalizeState(state);
+            mapPreviewChapterId = state.chapterId;
             localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
             render();
         }
@@ -300,6 +235,7 @@ function closeMenu() {
 }
 function navigate(page) {
     state.page = page;
+    if (page === "map") mapPreviewChapterId = state.chapterId;
     if (page === "learn" && !state.startedChapters.includes(state.chapterId))
         state.startedChapters.push(state.chapterId);
     closeMenu();
@@ -322,7 +258,7 @@ function render() {
 
 // Main pages
 function renderDashboard() {
-    setBreadcrumbs([]);
+    setBreadcrumbs(["Dashboard"]);
     const stats = getConceptStats();
     const chapter = getActiveChapter();
     const completed = state.completedChapters.includes(chapter.id);
@@ -341,8 +277,11 @@ function renderDashboard() {
         })
         .join("");
     const percent = Math.round((stats.done / stats.total) * 100);
+    const onboarding = state.startedChapters.length === 0
+        ? `<section class="card onboarding-guide" aria-label="Panduan mulai belajar"><div class="onboarding-intro"><span class="eyebrow">Baru di sini?</span><h2>Mulai dalam 3 langkah</h2><p>Ikuti urutan sederhana ini agar materi lebih mudah dipahami.</p></div><ol class="onboarding-steps"><li><b>01</b><span>Pelajari konsep</span></li><li><b>02</b><span>Amati contoh</span></li><li><b>03</b><span>Kerjakan kuis</span></li></ol></section>`
+        : "";
     pageRoot.innerHTML = `<div class="page"><div class="page-heading"><span class="eyebrow">Ruang Belajar</span><h1 class="page-title">Selamat datang!</h1><p class="page-subtitle">Lanjutkan pembelajaran Sistem Bilangan Real dari progres terakhirmu.</p></div>
-    <div class="dashboard-grid"><div class="dashboard-left">
+    ${onboarding}<div class="dashboard-grid"><div class="dashboard-left">
       <section class="card continue-card"><div class="section-head"><div><span class="eyebrow">${started ? "Lanjutkan Pembelajaran" : "Mulai Pembelajaran"}</span><h2 class="card-title">${chapter.title}</h2></div><span class="chapter-chip">Bab ${chapter.number}</span></div><div class="continue-inner"><div class="concept-art"><span class="math">ℝ</span></div><div class="continue-copy"><p>${chapter.subtitle}</p><p>${chapter.objectives[0]}</p><div class="mastery-row"><span>${status(completed ? "done" : started ? "current" : "idle")} ${completed ? "Bab selesai" : started ? `Tahap ${state.stage + 1} dari 4` : "Belum dimulai"}</span><span>${status(score >= 8 ? "done" : "idle")} ${Number.isInteger(score) ? `Skor ${score}/10` : "Kuis belum selesai"}</span><button class="btn btn-primary" data-chapter="${chapter.id}">${completed ? "Pelajari Kembali" : started ? "Lanjutkan Belajar" : "Mulai Belajar"}&nbsp; →</button></div></div></div></section>
       <section class="card collection-preview"><div class="section-head"><div><h2 class="card-title">Koleksi Konsep</h2><p>Ringkasan konsep yang telah dipelajari.</p></div><button class="small-link" data-go="collection">Lihat Semua&nbsp; →</button></div><div class="stats-grid dashboard-stats"><div class="stat">${status("done")}<b>${stats.done}</b><small>Dikuasai</small></div><div class="stat">${status("current")}<b>${stats.progress}</b><small>Dipelajari</small></div><div class="stat">${status("idle")}<b>${stats.locked}</b><small>Belum dipelajari</small></div></div></section>
       <section class="card recommend-card"><div class="recommend-inner"><div class="recommend-icon">✓</div><div><span class="eyebrow">Latihan Berikutnya</span><h3>Kuis ${chapter.title}</h3><p>Kerjakan 10 soal dan capai minimal 8 jawaban benar.</p></div><button class="btn btn-primary" data-chapter="${chapter.id}" data-stage="2">Buka Kuis&nbsp; →</button></div></section>
@@ -353,19 +292,19 @@ function renderDashboard() {
 }
 
 function renderMap() {
-    setBreadcrumbs([]);
-    const activeChapter = getActiveChapter();
+    setBreadcrumbs(["Peta Konsep"]);
+    const activeChapter = moduleChapters.find((chapter) => chapter.id === mapPreviewChapterId) || getActiveChapter();
     const chapterCards = moduleChapters
         .map((chapter) => {
             const done = state.completedChapters.includes(chapter.id);
             const active = chapter.id === activeChapter.id;
             const started = state.startedChapters.includes(chapter.id);
-            return `<article class="map-chapter ${active ? "active" : ""}"><button class="map-chapter-heading" data-chapter="${chapter.id}"><span class="chapter-number">${chapter.number}</span><span><small>${done ? "Bab selesai" : started ? "Sedang dipelajari" : "Belum dimulai"}</small><b>${chapter.title}</b></span><span class="map-arrow">→</span></button><div class="map-node-list">${chapter.concepts.map(([title]) => `<div class="map-node">${status(done ? "done" : started ? "current" : "idle")}<span>${title}</span></div>`).join("")}</div></article>`;
+            return `<article class="map-chapter ${active ? "active" : ""}"><button class="map-chapter-heading" data-preview-chapter="${chapter.id}" aria-label="Lihat ringkasan bab ${chapter.title}" aria-pressed="${active}"><span class="chapter-number">${chapter.number}</span><span><small>${done ? "Bab selesai" : started ? "Sedang dipelajari" : "Belum dimulai"}</small><b>${chapter.title}</b></span><span class="map-arrow">Lihat →</span></button><div class="map-node-list">${chapter.concepts.map(([title]) => `<div class="map-node">${status(done ? "done" : started ? "current" : "idle")}<span>${title}</span></div>`).join("")}</div></article>`;
         })
         .join("");
     const completed = state.completedChapters.includes(activeChapter.id);
-    const progress = completed ? 4 : state.startedChapters.includes(activeChapter.id) ? Math.min(state.stage + 1, 4) : 0;
-    pageRoot.innerHTML = `<div class="page"><div class="page-heading"><span class="eyebrow">Struktur Materi</span><h1 class="page-title">Peta Konsep</h1><p class="page-subtitle">Pilih bab untuk melihat konsep dan melanjutkan pembelajaran. Semua bab dapat dibuka kapan saja.</p></div><div class="map-layout">
+    const progress = completed ? 4 : state.startedChapters.includes(activeChapter.id) ? Math.min((state.chapterStages[activeChapter.id] || 0) + 1, 4) : 0;
+    pageRoot.innerHTML = `<div class="page"><div class="page-heading"><span class="eyebrow">Struktur Materi</span><h1 class="page-title">Peta Konsep</h1><p class="page-subtitle">Pilih kartu bab untuk meninjau konsep, lalu buka materi dari panel di sebelahnya. Semua bab dapat dibuka kapan saja.</p></div><div class="map-layout">
       <section class="map-scene"><div class="map-banner"><span>ℝ</span><div><small>MODUL PEMBELAJARAN</small><b>Sistem Bilangan Real</b></div></div><div class="map-columns">${chapterCards}</div></section>
       <aside class="map-side"><section class="card chapter-card"><span class="eyebrow">Bab ${activeChapter.number}</span><h2>${activeChapter.title}</h2><p>${activeChapter.subtitle}</p><div class="chapter-progress"><b>Tahap terakhir <small>${progress}/4 tahap</small></b><div class="progress-line"><i style="width:${(progress / 4) * 100}%"></i></div></div><button class="btn btn-primary map-primary-action" data-chapter="${activeChapter.id}">${completed ? "Pelajari Kembali" : progress ? "Lanjutkan Bab" : "Mulai Bab"} →</button></section><section class="card concept-list-card"><h3>Konsep dalam bab ini</h3><div class="concept-list">${activeChapter.concepts.map(([title, formula]) => `<div class="concept-item">${status(completed ? "done" : progress ? "current" : "idle")}<span><b>${title}</b><small>${escapeHtml(formula)}</small></span></div>`).join("")}</div></section></aside>
       <section class="card legend"><h3>Petunjuk status</h3><span>${status("done")} Sudah dikuasai</span><span>${status("current")} Sedang dipelajari</span><span>${status("idle")} Belum dipelajari</span></section>
@@ -439,11 +378,7 @@ function renderModuleQuiz(chapter) {
 }
 
 function renderModuleQuizResult(chapter, answers) {
-    const score = chapter.quiz.reduce(
-        (total, question, index) =>
-            total + (answers[index] === question[2] ? 1 : 0),
-        0,
-    );
+    const score = calculateQuizScore(chapter, answers);
     state.chapterScores[chapter.id] = score;
     const passed = score >= 8;
     pageRoot.innerHTML = `<div class="page">${learningHeader("Hasil Kuis")}<section class="card mastered-card quiz-result"><div class="badge"><span>${passed ? "🏆" : "📘"}</span></div><h2>${score * 10}</h2><h3>${score} dari 10 jawaban benar</h3><p>${passed ? "Target penguasaan tercapai. Lanjutkan ke penerapan dan refleksi." : "Target 80 belum tercapai. Tinjau kembali materi lalu coba kuis sekali lagi."}</p><div class="master-actions"><button class="btn" data-action="retry-quiz">Ulangi Kuis</button>${passed ? '<button class="btn btn-primary" data-stage="3">Lanjut ke Penerapan →</button>' : '<button class="btn btn-primary" data-stage="0">Tinjau Materi →</button>'}</div></section>${closeLearning()}${progressSide("Progress Kuis", 10, 10)}</aside></div></div>`;
@@ -572,7 +507,7 @@ function renderProfile() {
 
 function renderSettings() {
     setBreadcrumbs(["Pengaturan"]);
-    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Pengaturan</h1><p class="page-subtitle">Kelola pengalaman belajar di perangkat ini.</p><section class="card settings-card"><div class="settings-row"><div><h2>Penyimpanan progres</h2><p>Progres tersimpan otomatis ke database dan tetap memiliki salinan lokal di browser.</p></div><span class="settings-badge">Sinkron otomatis</span></div><div class="settings-row danger-zone"><div><h2>Atur ulang progres</h2><p>Kembalikan semua jawaban dan progres ke kondisi awal di perangkat dan database.</p></div><button class="btn btn-red" data-action="reset-progress">Atur Ulang</button></div></section></div>`;
+    pageRoot.innerHTML = `<div class="page"><h1 class="page-title">Pengaturan</h1><p class="page-subtitle">Kelola pengalaman belajar di perangkat ini.</p><section class="card settings-card"><div class="settings-row"><div><h2>Penyimpanan progres</h2><p>Progres tersimpan otomatis ke database dan tetap memiliki salinan lokal di browser.</p></div><span class="settings-badge">Sinkron otomatis</span></div><div class="settings-row"><div><h2>Progres contoh untuk demo</h2><p>Tampilkan satu bab selesai dan satu bab sedang dikerjakan. Progres saat ini akan diganti setelah konfirmasi.</p></div><button class="btn" data-action="load-demo-progress">Muat Contoh</button></div><div class="settings-row danger-zone"><div><h2>Atur ulang progres</h2><p>Kembalikan semua jawaban dan progres ke kondisi awal di perangkat dan database.</p></div><button class="btn btn-red" data-action="reset-progress">Atur Ulang</button></div></section></div>`;
 }
 
 function renderEvaluation() {
@@ -607,19 +542,21 @@ document.addEventListener("click", (event) => {
         save();
         return;
     }
+    const preview = event.target.closest("[data-preview-chapter]");
+    if (preview) {
+        mapPreviewChapterId = preview.dataset.previewChapter;
+        renderMap();
+        document.querySelector(`[data-preview-chapter="${mapPreviewChapterId}"]`)?.focus({ preventScroll: true });
+        return;
+    }
     const chapter = event.target.closest("[data-chapter]");
     if (chapter) {
-        state.chapterId = chapter.dataset.chapter;
         const requestedStage = chapter.dataset.stage;
-        const savedStage = state.chapterStages[state.chapterId];
-        setLearningStage(
-            requestedStage === undefined
-                ? Number.isInteger(savedStage) && savedStage >= 0 && savedStage <= 4
-                    ? savedStage === 4 ? 0 : savedStage
-                    : 0
-                : Number(requestedStage),
-        );
-        state.quizIndex = state.quizAnswers[state.chapterId]?.length || 0;
+        if (!openChapter(
+            state,
+            chapter.dataset.chapter,
+            requestedStage === undefined ? undefined : Number(requestedStage),
+        )) return;
         navigate("learn");
         return;
     }
@@ -653,10 +590,7 @@ document.addEventListener("click", (event) => {
     }
     const quizAnswer = event.target.closest("[data-quiz-answer]");
     if (quizAnswer) {
-        const answers = state.quizAnswers[state.chapterId] || [];
-        if (!Number.isInteger(answers[state.quizIndex])) {
-            answers[state.quizIndex] = Number(quizAnswer.dataset.quizAnswer);
-            state.quizAnswers[state.chapterId] = answers;
+        if (recordQuizAnswer(state, Number(quizAnswer.dataset.quizAnswer))) {
             renderLearning();
             save();
         }
@@ -695,9 +629,10 @@ document.addEventListener("click", (event) => {
         return;
     }
     if (action.dataset.action === "next-quiz") {
-        state.quizIndex += 1;
-        renderLearning();
-        save();
+        if (advanceQuiz(state)) {
+            renderLearning();
+            save();
+        }
         return;
     }
     if (action.dataset.action === "retry-quiz") {
@@ -744,6 +679,15 @@ document.addEventListener("click", (event) => {
         resetProgress();
         renderSettings();
         notify("Progres belajar berhasil diatur ulang.");
+        return;
+    }
+    if (action.dataset.action === "load-demo-progress") {
+        if (!window.confirm("Ganti progres saat ini dengan data contoh untuk demo?"))
+            return;
+        Object.assign(state, createDemoState(), { page: "settings" });
+        save();
+        renderSettings();
+        notify("Progres contoh siap digunakan.");
         return;
     }
     if (action.dataset.action === "check-challenge") {
